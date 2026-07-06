@@ -21,10 +21,10 @@ from frappe.utils import now
 
 
 class AssistantAuditLog(Document):
-    """Assistant Audit Log DocType controller"""
+    """Assistant Audit Log DocType controller."""
 
     def before_insert(self):
-        """Set default values before inserting"""
+        """Set default values before inserting."""
         if not self.timestamp:
             self.timestamp = now()
 
@@ -33,7 +33,7 @@ class AssistantAuditLog(Document):
             self.ip_address = frappe.local.request_ip
 
     def validate(self):
-        """Validate audit log entry"""
+        """Validate audit log entry."""
         # Ensure required fields are set
         if not self.user:
             self.user = frappe.session.user
@@ -41,8 +41,43 @@ class AssistantAuditLog(Document):
         if not self.timestamp:
             self.timestamp = now()
 
+    def before_save(self):
+        """Enforce append-only immutability.
+
+        The audit trail is the accountability record for everything the LLM does,
+        so an existing entry must never be edited. Inserts are allowed (is_new());
+        any later save is rejected — even from code paths that pass
+        ignore_permissions=True, since controller hooks still run.
+
+        Residual: frappe.db.set_value / raw SQL bypass controllers entirely. Guarding
+        against a determined System Manager at that level requires cryptographic
+        chaining (see docs/review/03-decisions.md, ADR-3 option C) and is out of scope
+        for this change, which closes the desk/REST and ORM tamper paths.
+        """
+        if not self.is_new():
+            frappe.throw(
+                _("Assistant Audit Log entries are immutable and cannot be modified after creation."),
+                frappe.PermissionError,
+            )
+
+    def on_trash(self):
+        """Block individual ORM deletes.
+
+        Retention deletion runs as a scheduled raw-SQL bulk DELETE (see
+        assistant_core/server.py::cleanup_old_logs), which does not trigger this
+        controller hook. Any ORM-level delete — including delete_doc(ignore_permissions=True)
+        — is rejected here so audit history cannot be purged one row at a time.
+        """
+        frappe.throw(
+            _(
+                "Assistant Audit Log entries cannot be deleted individually. "
+                "They are removed only by the scheduled retention job."
+            ),
+            frappe.PermissionError,
+        )
+
     def get_formatted_execution_time(self):
-        """Get formatted execution time"""
+        """Get formatted execution time."""
         if self.execution_time:
             if self.execution_time < 1:
                 return f"{self.execution_time * 1000:.0f}ms"
@@ -53,7 +88,7 @@ class AssistantAuditLog(Document):
 
 @frappe.whitelist()
 def get_audit_statistics():
-    """Get audit statistics for dashboard"""
+    """Get audit statistics for dashboard."""
     today = frappe.utils.today()
 
     # Total actions today

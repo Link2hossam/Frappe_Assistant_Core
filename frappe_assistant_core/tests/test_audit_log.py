@@ -91,8 +91,9 @@ class TestAuditLogStatusClassification(BaseAssistantTest):
         self.assertIsNone(row["error_message"])
 
     def test_tool_reported_failure_logs_error(self):
-        """A tool returning {"success": False, ...} was previously logged as
-        Success. It must now be logged as Error with ToolReportedError type."""
+        """A tool returning {"success": False, ...} was previously logged as Success. It must now be logged as Error
+        with ToolReportedError type.
+        """
 
         def executor(arguments):
             return {"success": False, "error": "file not found"}
@@ -239,12 +240,57 @@ class TestAuditSinkSanitization(BaseAssistantTest):
         self.assertEqual(row["status"], "Error")
 
 
+class TestAuditLogImmutability(BaseAssistantTest):
+    """Audit rows are append-only.
+
+    Once created, an entry must not be editable or deletable through the desk, REST, or ORM — even with
+    ignore_permissions — while the scheduled raw-SQL retention path (cleanup_old_logs) must keep working. Regression
+    test for finding A2 (docs/review/01-findings.md).
+    """
+
+    _IMMUTABLE_TOOL = "test_immutable_tool"
+
+    def _make_row(self):
+        return frappe.get_doc(
+            {
+                "doctype": "Assistant Audit Log",
+                "action": "tool_call",
+                "tool_name": self._IMMUTABLE_TOOL,
+                "user": frappe.session.user,
+                "status": "Success",
+            }
+        ).insert(ignore_permissions=True)
+
+    def tearDown(self):
+        # Raw-SQL cleanup bypasses the immutability guard (as retention does).
+        frappe.db.delete("Assistant Audit Log", {"tool_name": self._IMMUTABLE_TOOL})
+        super().tearDown()
+
+    def test_existing_row_cannot_be_edited_even_with_ignore_permissions(self):
+        doc = self._make_row()
+        fresh = frappe.get_doc("Assistant Audit Log", doc.name)
+        fresh.status = "Error"
+        with self.assertRaises(frappe.PermissionError):
+            fresh.save(ignore_permissions=True)
+
+    def test_orm_delete_is_blocked_even_with_ignore_permissions(self):
+        doc = self._make_row()
+        with self.assertRaises(frappe.PermissionError):
+            frappe.delete_doc("Assistant Audit Log", doc.name, ignore_permissions=True)
+
+    def test_retention_style_raw_sql_delete_still_works(self):
+        # Mirrors cleanup_old_logs(): raw SQL does not fire controller hooks,
+        # so the retention job is unaffected by the immutability guard.
+        doc = self._make_row()
+        frappe.db.delete("Assistant Audit Log", {"name": doc.name})
+        self.assertFalse(frappe.db.exists("Assistant Audit Log", doc.name))
+
+
 class TestSensitiveKeyMatcher(BaseAssistantTest):
     """_is_sensitive_key redacts credentials but preserves token-count metrics.
 
-    Earlier versions used a substring blocklist that included ``token``, which
-    over-redacted ``input_tokens`` / ``output_tokens`` / ``total_tokens`` in
-    audit output_data — the regex-backed matcher fixes that without weakening
+    Earlier versions used a substring blocklist that included ``token``, which over-redacted ``input_tokens`` /
+    ``output_tokens`` / ``total_tokens`` in audit output_data — the regex-backed matcher fixes that without weakening
     redaction of access_token / refresh_token / jwt_token / bearer_token.
     """
 
