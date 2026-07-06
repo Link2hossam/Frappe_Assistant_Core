@@ -19,6 +19,7 @@ Test suite for Document Tools using Plugin Architecture
 Tests document operations through the tool registry
 """
 
+import inspect
 import json
 import unittest
 from contextlib import ExitStack
@@ -31,7 +32,7 @@ from frappe_assistant_core.tests.base_test import BaseAssistantTest
 
 
 class TestDocumentTools(BaseAssistantTest):
-    """Test document tools through plugin registry"""
+    """Test document tools through plugin registry."""
 
     def setUp(self):
         super().setUp()
@@ -39,7 +40,7 @@ class TestDocumentTools(BaseAssistantTest):
         self.test_doctype = "ToDo"  # Safe test doctype that always exists
 
     def test_get_tools_structure(self):
-        """Test that document tools are properly registered"""
+        """Test that document tools are properly registered."""
         tools = self.registry.get_available_tools()
         tool_names = [tool["name"] for tool in tools]
 
@@ -55,8 +56,22 @@ class TestDocumentTools(BaseAssistantTest):
 
         self.assertGreater(len(found_tools), 0, f"Should find document tools. Available: {tool_names}")
 
+    def test_delete_document_has_no_force_argument(self):
+        """Regression for A2/A4: the delete_document tool must not expose a `force` argument. Forcing past
+        LinkExistsError leaves dangling references and is a data-integrity risk under prompt injection.
+        """
+        from frappe_assistant_core.plugins.core.tools.delete_document import DocumentDelete
+
+        tool = DocumentDelete()
+        properties = tool.inputSchema.get("properties", {})
+        self.assertNotIn("force", properties, "delete_document must not accept a 'force' argument")
+
+        # The tool must also not coach the model to escalate to a forced delete.
+        source = inspect.getsource(DocumentDelete.execute)
+        self.assertNotIn("force=true", source.lower())
+
     def test_create_document_basic(self):
-        """Test basic document creation"""
+        """Test basic document creation."""
         if not self.registry.has_tool("create_document"):
             self.skipTest("create_document tool not available")
 
@@ -80,7 +95,7 @@ class TestDocumentTools(BaseAssistantTest):
             self.fail(f"Tool execution raised exception: {str(e)}")
 
     def test_get_document_basic(self):
-        """Test basic document retrieval"""
+        """Test basic document retrieval."""
         if not self.registry.has_tool("get_document"):
             self.skipTest("get_document tool not available")
 
@@ -99,7 +114,7 @@ class TestDocumentTools(BaseAssistantTest):
             self.fail(f"Tool execution raised exception: {str(e)}")
 
     def test_list_documents_via_execute_tool(self):
-        """Test document listing"""
+        """Test document listing."""
         if not self.registry.has_tool("list_documents"):
             self.skipTest("list_documents tool not available")
 
@@ -247,7 +262,7 @@ class TestDocumentTools(BaseAssistantTest):
         self.assertFalse(fallback_count_call.kwargs["ignore_permissions"])
 
     def test_update_document_basic(self):
-        """Test basic document update"""
+        """Test basic document update."""
         if not self.registry.has_tool("update_document"):
             self.skipTest("update_document tool not available")
 
@@ -273,7 +288,7 @@ class TestDocumentTools(BaseAssistantTest):
                     self.fail(f"Update tool execution raised exception: {str(e)}")
 
     def test_execute_tool_routing(self):
-        """Test that tool routing works correctly"""
+        """Test that tool routing works correctly."""
         # This should pass for any available tool
         tools = self.registry.get_available_tools()
         if tools:
@@ -282,7 +297,7 @@ class TestDocumentTools(BaseAssistantTest):
             self.assertTrue(hasattr(self.registry, "get_available_tools"))
 
     def test_execute_tool_invalid_tool(self):
-        """Test handling of invalid tool names"""
+        """Test handling of invalid tool names."""
         try:
             result = self.registry.execute_tool("nonexistent_tool", {})
             # Should return error, not raise exception
@@ -293,7 +308,7 @@ class TestDocumentTools(BaseAssistantTest):
             self.assertIsInstance(e, (ValueError, KeyError, AttributeError))
 
     def test_create_document_with_submit(self):
-        """Test document creation with submission"""
+        """Test document creation with submission."""
         if not self.registry.has_tool("create_document"):
             self.skipTest("create_document tool not available")
 
@@ -311,7 +326,7 @@ class TestDocumentTools(BaseAssistantTest):
             self.fail(f"Tool execution with submit raised exception: {str(e)}")
 
     def test_create_document_no_permission(self):
-        """Test document creation without permission"""
+        """Test document creation without permission."""
         if not self.registry.has_tool("create_document"):
             self.skipTest("create_document tool not available")
 
@@ -336,7 +351,7 @@ class TestDocumentTools(BaseAssistantTest):
                 pass
 
     def test_get_document_no_permission(self):
-        """Test document retrieval without permission"""
+        """Test document retrieval without permission."""
         if not self.registry.has_tool("get_document"):
             self.skipTest("get_document tool not available")
 
@@ -352,7 +367,7 @@ class TestDocumentTools(BaseAssistantTest):
             pass
 
     def test_get_document_nonexistent(self):
-        """Test getting a nonexistent document"""
+        """Test getting a nonexistent document."""
         if not self.registry.has_tool("get_document"):
             self.skipTest("get_document tool not available")
 
@@ -369,7 +384,7 @@ class TestDocumentTools(BaseAssistantTest):
             pass
 
     def test_update_document_no_permission(self):
-        """Test document update without permission"""
+        """Test document update without permission."""
         if not self.registry.has_tool("update_document"):
             self.skipTest("update_document tool not available")
 
@@ -387,8 +402,8 @@ class TestDocumentTools(BaseAssistantTest):
             pass
 
     def test_create_document_no_false_positive_for_set_missing_values_fields(self):
-        """Issue #165 follow-up: fields populated by Frappe's set_missing_values()
-        during validate() must not be flagged as missing.
+        """Issue #165 follow-up: fields populated by Frappe's set_missing_values() during validate() must not be flagged
+        as missing.
 
         Quotation has reqd fields (conversion_rate, price_list_currency,
         plc_conversion_rate) that new_doc() does NOT populate — they're filled
@@ -446,8 +461,8 @@ class TestDocumentTools(BaseAssistantTest):
                 pass
 
     def test_create_document_mandatory_error_returns_structured_response(self):
-        """When Frappe raises MandatoryError, the tool returns the structured
-        missing-fields response (not a raw error string).
+        """When Frappe raises MandatoryError, the tool returns the structured missing-fields response (not a raw error
+        string).
 
         ToDo has a single mandatory field (`description`) that is NOT populated
         by set_missing_values, so omitting it reliably triggers MandatoryError
@@ -482,7 +497,7 @@ class TestDocumentTools(BaseAssistantTest):
         Triggering: pass an invalid `reference_type` link value to ToDo. This
         raises a LinkValidationError (subclass of ValidationError, not
         MandatoryError), routes through the generic `except Exception`, and
-        attempts to call `_(\"...\")` for log_error. The test asserts the call
+        attempts to call `_("...")` for log_error. The test asserts the call
         completes and returns a structured dict, never an UnboundLocalError.
         """
         from frappe_assistant_core.plugins.core.tools.create_document import DocumentCreate
@@ -556,14 +571,14 @@ class TestDocumentTools(BaseAssistantTest):
 
 
 class TestDocumentToolsIntegration(BaseAssistantTest):
-    """Integration tests for document tools"""
+    """Integration tests for document tools."""
 
     def setUp(self):
         super().setUp()
         self.registry = get_tool_registry()
 
     def test_document_lifecycle(self):
-        """Test complete document lifecycle"""
+        """Test complete document lifecycle."""
         if not all(
             self.registry.has_tool(tool) for tool in ["create_document", "get_document", "update_document"]
         ):
@@ -602,7 +617,7 @@ class TestDocumentToolsIntegration(BaseAssistantTest):
             self.fail(f"Document lifecycle test failed: {str(e)}")
 
     def test_error_handling_scenarios(self):
-        """Test various error scenarios"""
+        """Test various error scenarios."""
         # Test with invalid arguments
         invalid_tests = [
             ("create_document", {}),  # Missing required fields
@@ -634,8 +649,9 @@ class _FakeChildRow:
 
 
 class _FakeDoc:
-    """Stand-in for a Frappe parent doc. Holds named child-table lists and supports
-    the subset of the doc API used by _apply_child_table_update."""
+    """Stand-in for a Frappe parent doc. Holds named child-table lists and supports the subset of the doc API used by
+    _apply_child_table_update.
+    """
 
     def __init__(self, tables):
         # tables: dict[fieldname] -> list[_FakeChildRow]

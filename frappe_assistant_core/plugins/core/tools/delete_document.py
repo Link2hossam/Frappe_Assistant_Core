@@ -28,8 +28,7 @@ from frappe_assistant_core.core.base_tool import BaseTool
 
 
 class DocumentDelete(BaseTool):
-    """
-    Tool for deleting existing Frappe documents.
+    """Tool for deleting existing Frappe documents.
 
     Provides capabilities for:
     - Deleting document records
@@ -54,20 +53,14 @@ class DocumentDelete(BaseTool):
                     "type": "string",
                     "description": "The document name/ID to delete (e.g., 'CUST-00001', 'SINV-00001')",
                 },
-                "force": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Force deletion even if there are dependencies. Use with caution.",
-                },
             },
             "required": ["doctype", "name"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Delete an existing document"""
+        """Delete an existing document."""
         doctype = arguments.get("doctype")
         name = arguments.get("name")
-        force = arguments.get("force", False)
 
         # Check permission for DocType
         if not frappe.has_permission(doctype, "delete"):
@@ -101,12 +94,13 @@ class DocumentDelete(BaseTool):
                     "name": name,
                 }
 
-            # Delete document
+            # Delete document. Link-dependency protection is intentionally NOT
+            # bypassable from this tool: forcing a delete past LinkExistsError
+            # would leave dangling references and is a data-integrity risk —
+            # especially if the model was steered here by injected content in
+            # returned records. Callers must resolve dependencies explicitly.
             try:
-                if force:
-                    frappe.delete_doc(doctype, name, force=True)
-                else:
-                    frappe.delete_doc(doctype, name)
+                frappe.delete_doc(doctype, name)
 
                 frappe.db.commit()
 
@@ -117,10 +111,14 @@ class DocumentDelete(BaseTool):
                     "message": f"{doctype} '{name}' deleted successfully",
                 }
 
-            except frappe.LinkExistsError as link_error:
+            except frappe.LinkExistsError:
                 return {
                     "success": False,
-                    "error": f"Cannot delete {doctype} '{name}' because it is linked to other documents. Use force=true to override.",
+                    "error": (
+                        f"Cannot delete {doctype} '{name}' because other documents link to it. "
+                        f"Remove or reassign those links first, or cancel/delete the dependent "
+                        f"documents, then retry."
+                    ),
                     "doctype": doctype,
                     "name": name,
                     "dependency_error": True,
